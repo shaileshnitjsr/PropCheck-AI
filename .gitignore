@@ -40,3 +40,5 @@ playwright-report/
 test-results/
 load/results/
 compose.env
+.vercel
+.env*
