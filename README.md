@@ -25,19 +25,19 @@ PropCheck AI is an AI-powered property due-diligence assistant that helps users 
 
 ### 1. Property Due-Diligence Dashboard
 
-The dashboard lets users select property documents, run cross-document verification, review the PropCheck Index, and access the downloadable PDF audit report.
+The dashboard lets users review property documents, run cross-document verification, and access the PDF audit report.
 
 ![PropCheck AI Dashboard](docs/screenshots/propcheck-dashboard.png)
 
 ### 2. Cross-Document Discrepancy Detection
 
-PropCheck AI highlights inconsistencies between property documents, including differences in consideration amounts and possession dates. It displays supporting excerpts and suggested actions for further review.
+PropCheck AI highlights inconsistencies between property documents, including differences in consideration amounts and possession dates.
 
 ![Discrepancy Detection](docs/screenshots/discrepancy-detection.png)
 
 ### 3. Ask Your Contract — AI Assistant
 
-Users can ask questions about contract clauses, obligations, liabilities, and risks. Responses are grounded in available document excerpts, with a reminder to verify findings professionally.
+Users can ask questions about contract content and receive AI-generated responses based on the available document information.
 
 ![Ask Your Contract](docs/screenshots/ask-your-contract.png)
 
