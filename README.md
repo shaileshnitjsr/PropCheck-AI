@@ -21,6 +21,33 @@ PropCheck AI is an AI-powered property due-diligence assistant that helps users 
 - Check RERA registration-number formats and guide users toward official verification.
 - Generate downloadable PDF audit reports.
 
+## Screenshots & Demo
+
+Explore PropCheck AI's key features through the screenshots below.
+
+### 1. Property Due-Diligence Dashboard
+
+The dashboard lets users select property documents, run cross-document verification, review the PropCheck Index, and access the downloadable PDF audit report.
+
+![PropCheck AI Dashboard](docs/screenshots/propcheck-dashboard.png)
+
+### 2. Cross-Document Discrepancy Detection
+
+PropCheck AI highlights inconsistencies between property documents, including differences in consideration amounts and possession dates. It displays supporting excerpts and suggested actions for further review.
+
+![Discrepancy Detection](docs/screenshots/discrepancy-detection.png)
+
+### 3. Ask Your Contract — AI Assistant
+
+Users can ask questions about contract clauses, obligations, liabilities, and risks. Responses are grounded in available document excerpts, with a reminder to verify findings professionally.
+
+![Ask Your Contract](docs/screenshots/ask-your-contract.png)
+
+**Live Prototype:** https://prop-check-ai.vercel.app/
+
+*Note: Screenshots use fictional sample property documents for demonstration. PropCheck AI provides informational assistance, not legal advice. RERA format checks do not confirm official registration.*
+
+
 ## Technology Stack
 
 - **Frontend:** Next.js, React
