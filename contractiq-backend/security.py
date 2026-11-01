@@ -63,7 +63,7 @@ class SecurityMiddleware:
                     name == b"access-control-allow-origin" for name, _ in headers
                 ):
                     headers.extend([
-                        (b"access-control-allow-origin", origin.encode("latin-1")),
+                        (b"access-control-allow-origin", raw_origin.encode("latin-1")),
                         (b"access-control-expose-headers", b"X-Request-ID, Retry-After"),
                         (b"vary", b"Origin"),
                     ])
@@ -78,7 +78,8 @@ class SecurityMiddleware:
             await response(scope, receive, tagged_send)
 
         headers = dict(scope.get("headers", []))
-        origin = headers.get(b"origin", b"").decode("latin-1")
+        raw_origin = headers.get(b"origin", b"").decode("latin-1")
+        origin = raw_origin.rstrip("/")
         if origin and origin not in self.settings.cors_origins:
             await reject(403, "Origin is not allowed.")
             return

@@ -6,10 +6,12 @@ import { authenticatedHeaders, authEpoch } from './auth-session';
 import { savedAuditSchema, shareSchema, workspaceAnswerSchema } from './product-contracts';
 import { propertyDueDiligenceReportSchema, propertyFactSheetSchema, reraResultSchema } from './property-contracts';
 
+const configuredUrl = process.env.NEXT_PUBLIC_API_URL || process.env.NEXT_PUBLIC_RAG_API_URL;
 const BASE_URL = (
-  process.env.NEXT_PUBLIC_API_URL ||
-  process.env.NEXT_PUBLIC_RAG_API_URL ||
-  'http://127.0.0.1:8000'
+  configuredUrl ||
+  (typeof window !== 'undefined' && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1'
+    ? 'https://propcheck-ai.onrender.com'
+    : 'http://127.0.0.1:8000')
 ).replace(/\/$/, '');
 
 export class ApiError extends Error {
@@ -157,7 +159,16 @@ export const api = {
           headers: await authenticatedHeaders({ 'Content-Type': 'application/json' }), signal: controller.signal, cache: 'no-store',
         });
         if (epoch !== authEpoch()) throw new ApiError('Your session changed.', 401);
-        if (!response.ok || !response.body) throw new ApiError('The streamed request could not start.', response.status, response.headers.get('X-Request-ID') || undefined);
+        if (!response.ok || !response.body) {
+          let errorMsg = 'The streamed request could not start.';
+          try {
+            const errData = await response.json();
+            if (errData?.detail) errorMsg = typeof errData.detail === 'string' ? errData.detail : JSON.stringify(errData.detail);
+          } catch {
+            // ignore JSON parse errors on non-ok responses
+          }
+          throw new ApiError(errorMsg, response.status, response.headers.get('X-Request-ID') || undefined);
+        }
         return await consumeChatStream(response.body, streaming.onDraft);
       } catch (error) {
         if (error instanceof ApiError) throw error;

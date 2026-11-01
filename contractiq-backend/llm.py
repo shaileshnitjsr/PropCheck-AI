@@ -33,7 +33,9 @@ class GroqLLM:
                  api_key: str | None = None, model: str | None = None,
                  base_url: str = "https://api.groq.com/openai/v1", name: str = "groq"):
         self.settings = settings
-        self.client = client or httpx.Client()
+        self.client = client or httpx.Client(
+            timeout=httpx.Timeout(connect=10.0, read=float(settings.llm_timeout_seconds), write=10.0, pool=30.0)
+        )
         self.api_key = (api_key if api_key is not None else settings.groq_api_key).strip()
         self.model = (model or settings.groq_model).strip()
         self.endpoint = base_url.rstrip("/") + "/chat/completions"
@@ -63,77 +65,90 @@ class GroqLLM:
         """Groq JSON-object streaming; strict JSON-schema mode does not support streaming."""
         self.usage = {}
         self._ensure_configured()
-        remaining = deadline - time.monotonic()
-        if remaining <= 0:
-            raise ServiceError(504, "Analysis exceeded its time budget.")
         headers = {"Authorization": f"Bearer {self.api_key}"} if self.api_key else {}
-        try:
-            with self.client.stream(
-                "POST", self.endpoint,
-                headers=headers,
-                json={
-                    "model": self.model, "temperature": 0,
-                    "max_completion_tokens": 6000, "stream": True,
-                    "response_format": {"type": "json_object"},
-                    "messages": [
-                        {"role": "system", "content": GUARDRAILS + "\nOutput JSON with answer first, then excerpt_ids. Schema: " + json.dumps(schema.model_json_schema())},
-                        {"role": "user", "content": prompt},
-                    ],
-                }, timeout=min(remaining, self.settings.llm_timeout_seconds),
-            ) as response:
-                if response.status_code == 429:
-                    raise ServiceError(503, f"The analysis provider ({self.name}) is rate limited. Please try later.")
-                if response.status_code in (401, 403):
-                    raise ServiceError(502, f"The analysis provider ({self.name}) authentication failed. Check your API key.")
-                if response.status_code in (400, 404):
-                    try:
-                        err_payload = response.json().get("error", {})
-                        err_msg = err_payload.get("message") if isinstance(err_payload, dict) else str(err_payload)
-                    except Exception:
-                        err_msg = response.text[:200]
-                    raise ServiceError(502, f"The analysis provider ({self.name}) rejected the request: {err_msg}")
-                if response.status_code >= 500:
-                    raise ServiceError(503, f"The analysis provider ({self.name}) is unavailable. Please try later.")
-                response.raise_for_status()
-                finished = False
-                size = 0
-                for line in response.iter_lines():
-                    if cancelled.is_set():
-                        return
-                    if time.monotonic() > deadline:
-                        raise ServiceError(504, "Analysis exceeded its time budget.")
-                    if not line.startswith("data:"):
-                        continue
-                    value = line[5:].strip()
-                    if value == "[DONE]":
-                        break
-                    payload = json.loads(value)
-                    self.record_usage(payload.get("usage") or payload.get("x_groq", {}).get("usage"))
-                    for choice in payload.get("choices", []):
-                        reason = choice.get("finish_reason")
-                        if reason is not None:
-                            if reason != "stop":
-                                raise ValueError("Incomplete completion")
-                            finished = True
-                        delta = choice.get("delta", {})
-                        if delta.get("refusal"):
-                            raise ValueError("Refused completion")
-                        content = delta.get("content") or ""
-                        if not isinstance(content, str):
-                            raise ValueError("Invalid delta")
-                        size += len(content)
-                        if size > 40_000:
-                            raise ValueError("Oversized output")
-                        if content:
-                            yield content
-                if not finished:
-                    raise ValueError("Stream ended before completion")
-        except httpx.TimeoutException as exc:
-            raise ServiceError(504, f"The analysis provider ({self.name}) timed out. Please retry.") from exc
-        except httpx.ConnectError as exc:
-            raise ServiceError(503, f"The analysis provider ({self.name}) is unreachable at {self.endpoint}.") from exc
-        except httpx.HTTPError as exc:
-            raise ModelFailure() from exc
+        for attempt in range(max(1, self.settings.structured_retries) + 1):
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise ServiceError(504, "Analysis exceeded its time budget.")
+            try:
+                with self.client.stream(
+                    "POST", self.endpoint,
+                    headers=headers,
+                    json={
+                        "model": self.model, "temperature": 0,
+                        "max_completion_tokens": 6000, "stream": True,
+                        "response_format": {"type": "json_object"},
+                        "messages": [
+                            {"role": "system", "content": GUARDRAILS + "\nOutput JSON with answer first, then excerpt_ids. Schema: " + json.dumps(schema.model_json_schema())},
+                            {"role": "user", "content": prompt},
+                        ],
+                    }, timeout=min(remaining, self.settings.llm_timeout_seconds),
+                ) as response:
+                    if response.status_code == 429 or response.status_code >= 500:
+                        try:
+                            delay = min(15.0, max(0.5, float(response.headers.get("retry-after", "1.0"))))
+                        except ValueError:
+                            delay = 1.0
+                        if attempt < self.settings.structured_retries and deadline - time.monotonic() > delay + 0.1:
+                            time.sleep(delay)
+                            continue
+                        if response.status_code == 429:
+                            raise ServiceError(503, f"The analysis provider ({self.name}) is rate limited. Please try later.")
+                        raise ServiceError(503, f"The analysis provider ({self.name}) is unavailable. Please try later.")
+                    if response.status_code in (401, 403):
+                        raise ServiceError(502, f"The analysis provider ({self.name}) authentication failed. Check your API key.")
+                    if response.status_code in (400, 404):
+                        try:
+                            err_payload = response.json().get("error", {})
+                            err_msg = err_payload.get("message") if isinstance(err_payload, dict) else str(err_payload)
+                        except Exception:
+                            err_msg = response.text[:200]
+                        raise ServiceError(502, f"The analysis provider ({self.name}) rejected the request: {err_msg}")
+                    response.raise_for_status()
+                    finished = False
+                    size = 0
+                    for line in response.iter_lines():
+                        if cancelled.is_set():
+                            return
+                        if time.monotonic() > deadline:
+                            raise ServiceError(504, "Analysis exceeded its time budget.")
+                        if not line.startswith("data:"):
+                            continue
+                        value = line[5:].strip()
+                        if value == "[DONE]":
+                            break
+                        payload = json.loads(value)
+                        self.record_usage(payload.get("usage") or payload.get("x_groq", {}).get("usage"))
+                        for choice in payload.get("choices", []):
+                            reason = choice.get("finish_reason")
+                            if reason is not None:
+                                if reason != "stop":
+                                    raise ValueError("Incomplete completion")
+                                finished = True
+                            delta = choice.get("delta", {})
+                            if delta.get("refusal"):
+                                raise ValueError("Refused completion")
+                            content = delta.get("content") or ""
+                            if not isinstance(content, str):
+                                raise ValueError("Invalid delta")
+                            size += len(content)
+                            if size > 40_000:
+                                raise ValueError("Oversized output")
+                            if content:
+                                yield content
+                    if not finished:
+                        raise ValueError("Stream ended before completion")
+                    return
+            except (ValueError, KeyError, IndexError, TypeError):
+                if attempt < self.settings.structured_retries and deadline - time.monotonic() > 1.0:
+                    continue
+                raise
+            except httpx.TimeoutException as exc:
+                raise ServiceError(504, f"The analysis provider ({self.name}) timed out. Please retry.") from exc
+            except httpx.ConnectError as exc:
+                raise ServiceError(503, f"The analysis provider ({self.name}) is unreachable at {self.endpoint}.") from exc
+            except httpx.HTTPError as exc:
+                raise ModelFailure() from exc
 
     def generate(
         self, schema: type[T], prompt: str, *, deadline: float,
@@ -174,9 +189,9 @@ class GroqLLM:
                 )
                 if response.status_code == 429 or response.status_code >= 500:
                     try:
-                        delay = min(2.0, max(0.1, float(response.headers.get("retry-after", "0.5"))))
+                        delay = min(15.0, max(0.5, float(response.headers.get("retry-after", "1.0"))))
                     except ValueError:
-                        delay = 0.5
+                        delay = 1.0
                     if attempt < self.settings.structured_retries and deadline - time.monotonic() > delay + 0.1:
                         time.sleep(delay)
                         continue

@@ -37,6 +37,8 @@ def recognize_page(content: bytes, number: int, settings: Settings) -> PageText:
             finally:
                 bitmap.close()
                 page.close()
+                import gc
+                gc.collect()
         text = ""
         words: list[OcrWord] = []
         previous_line: tuple[int, int, int] | None = None

@@ -96,6 +96,9 @@ def extract_document(filename: str, content: bytes, settings: Settings) -> list[
                 if total > settings.max_text_chars:
                     raise InvalidDocument("Extracted text exceeds the configured character limit.")
                 pages.append(extracted)
+            del reader
+            import gc
+            gc.collect()
         elif ext == ".docx":
             with zipfile.ZipFile(io.BytesIO(content)) as archive:
                 root = ElementTree.fromstring(archive.read("word/document.xml"))

@@ -22,6 +22,8 @@ class Settings(BaseModel):
         "http://127.0.0.1:3001",
         "http://127.0.0.1:3002",
         "http://127.0.0.1:3003",
+        "https://prop-check-ai.vercel.app",
+        "https://propcheck-ai.onrender.com",
     ]
     groq_api_key: str = Field(default="", repr=False)
     groq_model: str = "llama-3.3-70b-versatile"
@@ -41,10 +43,10 @@ class Settings(BaseModel):
     rate_limit_window_seconds: int = Field(default=60, ge=1)
     llm_timeout_seconds: int = Field(default=45, ge=1, le=120)
     analysis_timeout_seconds: int = Field(default=240, ge=1, le=1800)
-    structured_retries: int = Field(default=1, ge=0, le=2)
-    map_batch_chars: int = Field(default=6000, ge=1000, le=12000)
+    structured_retries: int = Field(default=2, ge=0, le=4)
+    map_batch_chars: int = Field(default=8000, ge=1000, le=12000)
     chunking_strategy: Literal["recursive", "clause"] = "clause"
-    retriever_strategy: Literal["dense", "hybrid", "hybrid_rerank"] = "hybrid_rerank"
+    retriever_strategy: Literal["dense", "hybrid", "hybrid_rerank"] = "hybrid"
     retrieval_candidates: int = Field(default=12, ge=4, le=40)
     reranker_model: str = "Xenova/ms-marco-MiniLM-L-6-v2"
     pii_mode: Literal["standard", "patterns"] = "standard"
@@ -99,15 +101,18 @@ class Settings(BaseModel):
     def explicit_origins(cls, origins: list[str]) -> list[str]:
         if not origins:
             raise ValueError("CORS_ORIGINS must contain at least one explicit origin")
+        cleaned: list[str] = []
         for origin in origins:
-            parts = urlsplit(origin)
+            normalized = origin.strip().rstrip("/")
+            parts = urlsplit(normalized)
             if (
-                "*" in origin or parts.scheme not in {"http", "https"}
+                "*" in normalized or parts.scheme not in {"http", "https"}
                 or not parts.netloc or parts.path or parts.query or parts.fragment
                 or parts.username or parts.password
             ):
                 raise ValueError("CORS_ORIGINS must contain exact http(s) origins without paths")
-        return origins
+            cleaned.append(normalized)
+        return cleaned
 
     @field_validator("structured_mode")
     @classmethod
@@ -153,7 +158,7 @@ class Settings(BaseModel):
                     values[name] = value
         if "cors_origins" in values:
             values["cors_origins"] = [
-                v.strip() for v in str(values["cors_origins"]).split(",") if v.strip()
+                v.strip().rstrip("/") for v in str(values["cors_origins"]).split(",") if v.strip()
             ]
         if "data_dir" not in values and (backend_dir / "data").exists():
             values["data_dir"] = backend_dir / "data"

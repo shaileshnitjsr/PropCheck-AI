@@ -1,8 +1,17 @@
 import os
 import time
+import pytest
 import requests
 
 BASE_URL = "http://127.0.0.1:8000"
+
+def _is_live_server_up() -> bool:
+    try:
+        return requests.get(f"{BASE_URL}/health", timeout=0.5).status_code == 200
+    except Exception:
+        return False
+
+pytestmark = pytest.mark.skipif(not _is_live_server_up(), reason="Live server not running at http://127.0.0.1:8000")
 
 def test_propcheck_end_to_end_flow():
     # 1. Health check

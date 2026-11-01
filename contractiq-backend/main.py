@@ -81,15 +81,30 @@ def create_app(settings: Settings | None = None, service: RAGService | None = No
         if not isinstance(active_service.store, PostgresStore):
             raise ValueError("Production requires tenant-filtered Postgres storage")
         ingestion = Ingestion(settings, active_service.store)
-    operation_lock = threading.Lock()
+    ingest_lock = threading.Lock()
+    # Concurrency limiter to protect free-tier Render instances (512MB RAM) from OOM
+    # while allowing parallel reads, streaming chat, and audit without instant 503 errors.
+    operation_semaphore = threading.BoundedSemaphore(value=4)
 
-    def bounded(operation: Callable[[], T]) -> T:
-        if not operation_lock.acquire(blocking=False):
+    def bounded_ingest(operation: Callable[[], T]) -> T:
+        if not ingest_lock.acquire(blocking=False):
             raise ServiceError(503, "The server is processing another document. Please retry shortly.")
         try:
             return operation()
         finally:
-            operation_lock.release()
+            ingest_lock.release()
+            import gc
+            gc.collect()
+
+    def bounded(operation: Callable[[], T], timeout: float = 15.0) -> T:
+        if not operation_semaphore.acquire(timeout=timeout):
+            raise ServiceError(503, "The server is currently busy processing requests. Please retry shortly.")
+        try:
+            return operation()
+        finally:
+            operation_semaphore.release()
+            import gc
+            gc.collect()
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -190,7 +205,7 @@ def create_app(settings: Settings | None = None, service: RAGService | None = No
             if ingestion is not None:
                 ticket = await run_in_threadpool(ingestion.submit, filename, content)
                 return JSONResponse(ticket, status_code=202)
-            return await run_in_threadpool(bounded, lambda: active_service.ingest_document(filename, content))
+            return await run_in_threadpool(bounded_ingest, lambda: active_service.ingest_document(filename, content))
         finally:
             await upload_file.close()
 
